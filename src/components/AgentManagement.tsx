@@ -1,16 +1,13 @@
 import React, { useState, useEffect } from 'react'
-import { Plus, Edit, Trash2, Activity, Phone } from 'lucide-react'
+import { Plus, Edit, Trash2, Phone } from 'lucide-react'
 import axiosInstance from '../helpers/axios'
 import { getToken } from '../helpers/token'
 
 interface Agent {
-  id: number
-  fullName: string
-  email?: string
-  sipExtension: string
-  status: string
-  activeCalls?: number
-  totalCallsToday?: number
+  id: string
+  username: string
+  authType: string
+  columnId: number
 }
 
 const AgentManagement: React.FC = () => {
@@ -18,9 +15,7 @@ const AgentManagement: React.FC = () => {
   const [agents, setAgents] = useState<Agent[]>([])
   const [loading, setLoading] = useState(false)
   const [formData, setFormData] = useState({
-    fullName: '',
-    email: '',
-    password: '',
+    username: '',
     sipExtension: '',
     sipPassword: ''
   })
@@ -57,7 +52,7 @@ const AgentManagement: React.FC = () => {
 
       if (data.success) {
         setShowAddModal(false)
-        setFormData({ fullName: '', email: '', password: '', sipExtension: '', sipPassword: '' })
+        setFormData({ username: '', sipExtension: '', sipPassword: '' })
         fetchAgents()
       } else {
         setFormError(data.message || 'Failed to create agent')
@@ -67,12 +62,6 @@ const AgentManagement: React.FC = () => {
     } finally {
       setFormLoading(false)
     }
-  }
-
-  const statusColors: Record<string, string> = {
-    available: 'bg-green-500',
-    busy: 'bg-yellow-500',
-    offline: 'bg-red-500'
   }
 
   return (
@@ -94,19 +83,10 @@ const AgentManagement: React.FC = () => {
             <thead className="bg-dark-700">
               <tr>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
-                  Agent
+                  Extension
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
-                  SIP Extension
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
-                  Status
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
-                  Active Calls
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
-                  Calls Today
+                  Username
                 </th>
                 <th className="px-6 py-3 text-right text-xs font-medium text-gray-400 uppercase tracking-wider">
                   Actions
@@ -115,33 +95,15 @@ const AgentManagement: React.FC = () => {
             </thead>
             <tbody className="divide-y divide-dark-700">
               {agents.map((agent) => (
-                <tr key={agent.id} className="hover:bg-dark-700 transition-colors">
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div>
-                      <div className="text-sm font-medium text-gray-100">{agent.fullName}</div>
-                      <div className="text-sm text-gray-400">{agent.email}</div>
-                    </div>
-                  </td>
+                <tr key={agent.columnId} className="hover:bg-dark-700 transition-colors">
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className="flex items-center text-sm text-gray-300">
                       <Phone className="w-4 h-4 mr-2 text-gray-400" />
-                      {agent.sipExtension}
+                      {agent.id}
                     </div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="flex items-center space-x-2">
-                      <span className={`w-2 h-2 rounded-full ${statusColors[agent.status]}`}></span>
-                      <span className="text-sm text-gray-300 capitalize">{agent.status}</span>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="flex items-center text-sm text-gray-300">
-                      <Activity className="w-4 h-4 mr-2 text-primary-400" />
-                      {agent.activeCalls}
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <span className="text-sm text-gray-300">{agent.totalCallsToday}</span>
+                    <span className="text-sm text-gray-300">{agent.username}</span>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                     <div className="flex justify-end space-x-2">
@@ -175,42 +137,14 @@ const AgentManagement: React.FC = () => {
             <form onSubmit={handleCreateAgent} className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-300 mb-2">
-                  Full Name *
+                  Username *
                 </label>
                 <input
                   type="text"
                   className="input-field"
-                  placeholder="John Doe"
-                  value={formData.fullName}
-                  onChange={(e) => setFormData({ ...formData, fullName: e.target.value })}
-                  required
-                />
-              </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">
-                  Email *
-                </label>
-                <input
-                  type="email"
-                  className="input-field"
-                  placeholder="john@dorcall.com"
-                  value={formData.email}
-                  onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                  required
-                />
-              </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">
-                  Password *
-                </label>
-                <input
-                  type="password"
-                  className="input-field"
-                  placeholder="Login password"
-                  value={formData.password}
-                  onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                  placeholder="Username"
+                  value={formData.username}
+                  onChange={(e) => setFormData({ ...formData, username: e.target.value })}
                   required
                 />
               </div>
@@ -222,7 +156,7 @@ const AgentManagement: React.FC = () => {
                 <input
                   type="text"
                   className="input-field"
-                  placeholder="1005"
+                  placeholder="1001"
                   value={formData.sipExtension}
                   onChange={(e) => setFormData({ ...formData, sipExtension: e.target.value })}
                   required
@@ -241,13 +175,6 @@ const AgentManagement: React.FC = () => {
                   onChange={(e) => setFormData({ ...formData, sipPassword: e.target.value })}
                   required
                 />
-              </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">
-                  Role
-                </label>
-                <input type="text" className="input-field" value="Agent" disabled />
               </div>
               
               <div className="flex space-x-3 pt-4">

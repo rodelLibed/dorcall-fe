@@ -1,11 +1,11 @@
 import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Phone, Lock, User, Headphones } from 'lucide-react'
+import { Phone, Lock, Headphones } from 'lucide-react'
 import axiosInstance from '../helpers/axios'
 import { setToken } from '../helpers/token'
 
 const AgentLogin: React.FC = () => {
-  const [email, setEmail] = useState('')
+  const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -17,14 +17,12 @@ const AgentLogin: React.FC = () => {
     setLoading(true)
 
     try {
-      const { data } = await axiosInstance().post('/api/auth/login', { email, password })
+      const { data } = await axiosInstance().post('/api/auth/agent-login', { username, password })
 
-      if (data.success && data.user.role === 'agent') {
+      if (data.success) {
         localStorage.setItem('user', JSON.stringify(data.user))
         setToken(data.token)
         navigate('/agent')
-      } else if (data.success && data.user.role !== 'agent') {
-        setError('Access denied. This login is for agents only.')
       } else {
         setError(data.message || 'Login failed.')
       }
@@ -61,16 +59,16 @@ const AgentLogin: React.FC = () => {
         <form onSubmit={handleLogin} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-300 mb-2">
-              Agent Email
+              Username
             </label>
             <div className="relative">
-              <User className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
+              <Phone className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
               <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                type="text"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
                 className="input-field pl-10"
-                placeholder="agent@dorcall.com"
+                placeholder="Username"
                 required
               />
             </div>
