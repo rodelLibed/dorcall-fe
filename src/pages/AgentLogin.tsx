@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { Phone, Lock, Headphones } from 'lucide-react'
 import axiosInstance from '../helpers/axios'
 import { setToken } from '../helpers/token'
+import { useAuth } from '../context/AuthContext'
 
 const AgentLogin: React.FC = () => {
   const [username, setUsername] = useState('')
@@ -10,6 +11,7 @@ const AgentLogin: React.FC = () => {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const navigate = useNavigate()
+  const { setUser } = useAuth()
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -20,7 +22,7 @@ const AgentLogin: React.FC = () => {
       const { data } = await axiosInstance().post('/api/auth/agent-login', { username, password })
 
       if (data.success) {
-        localStorage.setItem('user', JSON.stringify(data.user))
+        setUser(data.user)
         setToken(data.token)
         navigate('/agent')
       } else {

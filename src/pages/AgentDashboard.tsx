@@ -1,11 +1,12 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Phone, MessageSquare, Users, Clock, LogOut, Settings, User, Activity } from 'lucide-react'
+import { Phone, MessageSquare, Users, Clock, LogOut, User, Activity } from 'lucide-react'
 import Dialer from '../components/Dialer'
 import CallHistory from '../components/CallHistory'
 import SmsChat from '../components/SmsChat'
 import ContactList from '../components/ContactList'
-import { removeToken } from '../helpers/token'
+import { useCall } from '../context/CallContext'
+import { useAuth } from '../context/AuthContext'
 
 type TabType = 'dialer' | 'calls' | 'sms' | 'contacts'
 
@@ -13,10 +14,15 @@ const AgentDashboard: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabType>('dialer')
   const [agentStatus, setAgentStatus] = useState<'available' | 'busy' | 'offline'>('available')
   const navigate = useNavigate()
+  const { initializeSip, registrationState } = useCall()
+  const { user, logout } = useAuth()
+
+  useEffect(() => {
+    initializeSip()
+  }, [initializeSip])
 
   const handleLogout = () => {
-    removeToken()
-    localStorage.removeItem('user')
+    logout()
     navigate('/agent-login')
   }
 
@@ -48,22 +54,18 @@ const AgentDashboard: React.FC = () => {
                 <select
                   value={agentStatus}
                   onChange={(e) => setAgentStatus(e.target.value as any)}
-                  className="bg-transparent text-sm font-medium text-gray-100 focus:outline-none cursor-pointer"
+                  className="bg-dark-700 text-sm font-medium text-gray-100 focus:outline-none cursor-pointer rounded px-1 py-0.5"
                 >
-                  <option value="available">Available</option>
-                  <option value="busy">Busy</option>
-                  <option value="offline">Offline</option>
+                  <option value="available" className="bg-dark-800 text-gray-100">Available</option>
+                  <option value="busy" className="bg-dark-800 text-gray-100">Busy</option>
+                  <option value="offline" className="bg-dark-800 text-gray-100">Offline</option>
                 </select>
               </div>
             </div>
             
-            <button className="p-2 hover:bg-dark-700 rounded-lg transition-colors">
-              <Settings className="w-5 h-5 text-gray-400" />
-            </button>
-            
             <div className="flex items-center space-x-2 bg-dark-700 px-3 py-2 rounded-lg">
               <User className="w-4 h-4 text-gray-400" />
-              <span className="text-sm text-gray-300">Agent 001</span>
+              <span className="text-sm text-gray-300">{user?.username || 'Agent'}</span>
             </div>
             
             <button
