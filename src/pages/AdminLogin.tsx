@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { Phone, Lock, User, Shield } from 'lucide-react'
 import axiosInstance from '../helpers/axios'
 import { setToken } from '../helpers/token'
+import { useAuth } from '../context/AuthContext'
 
 const AdminLogin: React.FC = () => {
   const [email, setEmail] = useState('')
@@ -10,6 +11,7 @@ const AdminLogin: React.FC = () => {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const navigate = useNavigate()
+  const { setUser } = useAuth()
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -20,7 +22,7 @@ const AdminLogin: React.FC = () => {
       const { data } = await axiosInstance().post('/api/auth/login', { email, password })
 
       if (data.success && data.user.role === 'admin') {
-        localStorage.setItem('user', JSON.stringify(data.user))
+        setUser(data.user)
         setToken(data.token)
         navigate('/admin')
       } else if (data.success && data.user.role !== 'admin') {

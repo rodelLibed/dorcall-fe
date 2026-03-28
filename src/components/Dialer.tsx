@@ -1,4 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react'
+import { Phone, PhoneOff, Volume2, Mic, MicOff, Pause, Play, PhoneIncoming } from 'lucide-react'
+import { useCall } from '../context/CallContext'
 
 import {
   Phone,
@@ -12,6 +14,7 @@ import {
 import axiosInstance from '../helpers/axios';
 import socket from '../helpers/socket';
 const Dialer: React.FC = () => {
+
   const [phoneNumber, setPhoneNumber] = useState('');
   const [isCallActive, setIsCallActive] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
@@ -20,15 +23,43 @@ const Dialer: React.FC = () => {
 
   const [channel, setChannel] = useState('');
 
-  const handleNumberClick = (num: string) => {
+<!--   const handleNumberClick = (num: string) => {
     setPhoneNumber((prev) => prev + num);
-  };
+  }; -->
+ const [phoneNumber, setPhoneNumber] = useState('')
+  const [isMuted, setIsMuted] = useState(false)
 
+  const {
+    registrationState,
+    callState,
+    callerNumber,
+    callDuration,
+    incomingInvitation,
+    makeCall,
+    answerIncoming,
+    rejectIncoming,
+    hangUp,
+    toggleMute,
+    toggleHold,
+    sendDtmf,
+  } = useCall()
+
+  const isCallActive = callState === 'active' || callState === 'calling' || callState === 'held'
+  const isRinging = callState === 'ringing'
+
+  const handleNumberClick = (num: string) => {
+    if (isCallActive) {
+      sendDtmf(num)
+    } else {
+      setPhoneNumber(prev => prev + num)
+    }
+  }
   useEffect(() => {
     socket.emit('join_Room', '1002');
 
     socket.on('receiveCallStats', (data) => {
       console.log('CALL STATUS:', data);
+
 
       // 👇 THIS updates your UI
       setIsCallActive(false);
@@ -58,6 +89,7 @@ const Dialer: React.FC = () => {
     }
   };
 
+
   const handleEndCall = async () => {
     try {
       const res: any = await axiosInstance().post('/api/calls/agent_hangup', {
@@ -77,9 +109,65 @@ const Dialer: React.FC = () => {
     }
   };
 
+  const handleEndCall = () => {
+    hangUp()
+    setIsMuted(false)
+    setPhoneNumber('')
+  }
+
+  const handleMuteToggle = () => {
+    const muted = toggleMute()
+    setIsMuted(muted)
+  }
+
+  const registrationColors: Record<string, string> = {
+    registered: 'bg-green-500',
+    registering: 'bg-yellow-500 animate-pulse',
+    unregistered: 'bg-gray-500',
+    error: 'bg-red-500',
+  }
+
   return (
     <div className="max-w-2xl mx-auto">
-      <h2 className="text-2xl font-bold text-gray-100 mb-6">Phone Dialer</h2>
+      <div className="flex items-center justify-between mb-6">
+        <h2 className="text-2xl font-bold text-gray-100">Phone Dialer</h2>
+        <div className="flex items-center space-x-2 bg-dark-700 px-3 py-1.5 rounded-lg">
+          <span className={`w-2 h-2 rounded-full ${registrationColors[registrationState]}`}></span>
+          <span className="text-xs text-gray-300 capitalize">{registrationState}</span>
+        </div>
+      </div>
+
+      {/* Incoming Call Banner */}
+      {isRinging && incomingInvitation && (
+        <div className="card p-4 mb-4 border border-green-500/50 bg-green-500/10">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-3">
+              <PhoneIncoming className="w-6 h-6 text-green-400 animate-pulse" />
+              <div>
+                <div className="text-sm text-gray-400">Incoming Call</div>
+                <div className="text-lg font-semibold text-gray-100">{callerNumber}</div>
+              </div>
+            </div>
+            <div className="flex space-x-2">
+              <button
+                onClick={answerIncoming}
+                className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg flex items-center space-x-2 transition-colors"
+              >
+                <Phone className="w-4 h-4" />
+                <span>Answer</span>
+              </button>
+              <button
+                onClick={rejectIncoming}
+                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg flex items-center space-x-2 transition-colors"
+              >
+                <PhoneOff className="w-4 h-4" />
+                <span>Reject</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      
 
       <div className="card p-6">
         {/* Display */}
@@ -87,10 +175,11 @@ const Dialer: React.FC = () => {
           <div className="bg-dark-700 rounded-lg p-4 mb-4">
             <input
               type="text"
-              value={phoneNumber}
-              onChange={(e) => setPhoneNumber(e.target.value)}
+              value={isCallActive ? callerNumber || phoneNumber : phoneNumber}
+              onChange={(e) => !isCallActive && setPhoneNumber(e.target.value)}
               placeholder="Enter phone number"
               className="w-full bg-transparent text-3xl text-center text-gray-100 focus:outline-none"
+              readOnly={isCallActive}
             />
           </div>
 
@@ -98,7 +187,9 @@ const Dialer: React.FC = () => {
             <div className="text-center">
               <div className="inline-flex items-center space-x-2 bg-green-500/20 text-green-400 px-4 py-2 rounded-lg">
                 <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
-                <span className="font-medium">Call Active</span>
+                <span className="font-medium">
+                  {callState === 'calling' ? 'Calling...' : callState === 'held' ? 'On Hold' : 'Call Active'}
+                </span>
                 <span className="font-mono">{callDuration}</span>
               </div>
             </div>
@@ -107,18 +198,15 @@ const Dialer: React.FC = () => {
 
         {/* Dialpad */}
         <div className="grid grid-cols-3 gap-3 mb-6">
-          {['1', '2', '3', '4', '5', '6', '7', '8', '9', '*', '0', '#'].map(
-            (num) => (
-              <button
-                key={num}
-                onClick={() => handleNumberClick(num)}
-                className="bg-dark-700 hover:bg-dark-600 text-gray-100 text-2xl font-semibold py-4 rounded-lg transition-colors"
-                disabled={isCallActive}
-              >
-                {num}
-              </button>
-            )
-          )}
+          {['1', '2', '3', '4', '5', '6', '7', '8', '9', '*', '0', '#'].map((num) => (
+            <button
+              key={num}
+              onClick={() => handleNumberClick(num)}
+              className="bg-dark-700 hover:bg-dark-600 text-gray-100 text-2xl font-semibold py-4 rounded-lg transition-colors"
+            >
+              {num}
+            </button>
+          ))}
         </div>
 
         {/* Call Controls */}
@@ -129,7 +217,7 @@ const Dialer: React.FC = () => {
             </button>
             <button
               onClick={handleCall}
-              disabled={!phoneNumber}
+              disabled={!phoneNumber || registrationState !== 'registered'}
               className="btn-primary flex-1 flex items-center justify-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <Phone className="w-5 h-5" />
@@ -139,7 +227,7 @@ const Dialer: React.FC = () => {
         ) : (
           <div className="grid grid-cols-4 gap-3">
             <button
-              onClick={() => setIsMuted(!isMuted)}
+              onClick={handleMuteToggle}
               className={`p-4 rounded-lg transition-colors ${
                 isMuted
                   ? 'bg-red-600 text-white'
@@ -154,18 +242,12 @@ const Dialer: React.FC = () => {
             </button>
 
             <button
-              onClick={() => setIsOnHold(!isOnHold)}
+              onClick={toggleHold}
               className={`p-4 rounded-lg transition-colors ${
-                isOnHold
-                  ? 'bg-yellow-600 text-white'
-                  : 'bg-dark-700 text-gray-300 hover:bg-dark-600'
+                callState === 'held' ? 'bg-yellow-600 text-white' : 'bg-dark-700 text-gray-300 hover:bg-dark-600'
               }`}
             >
-              {isOnHold ? (
-                <Play className="w-5 h-5 mx-auto" />
-              ) : (
-                <Pause className="w-5 h-5 mx-auto" />
-              )}
+              {callState === 'held' ? <Play className="w-5 h-5 mx-auto" /> : <Pause className="w-5 h-5 mx-auto" />}
             </button>
 
             <button className="p-4 bg-dark-700 hover:bg-dark-600 rounded-lg transition-colors text-gray-300">
