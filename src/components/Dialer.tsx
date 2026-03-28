@@ -57,21 +57,24 @@ const Dialer: React.FC = () => {
       }
     }
   };
-  const handleHangup = () => {
-    socket.emit('hangup', {
-      roomId: '1002',
-      channel: phoneNumber, // optional but better
-    });
-    console.log('NATAWAG?');
-  };
 
-  const handleEndCall = () => {
-    setIsCallActive(false);
-    setIsMuted(false);
-    setIsOnHold(false);
-    setPhoneNumber('');
-    setCallDuration('00:00');
-    handleHangup();
+  const handleEndCall = async () => {
+    try {
+      const res: any = await axiosInstance().post('/api/calls/agent_hangup', {
+        agent: 1002,
+      });
+      if (res.data.data.success) {
+        setIsCallActive(false);
+        setIsMuted(false);
+        setIsOnHold(false);
+        setPhoneNumber('');
+        setCallDuration('00:00');
+      }
+      // Start call logic here
+    } catch (error) {
+      console.error('Call failed', error);
+      setIsCallActive(false);
+    }
   };
 
   return (
