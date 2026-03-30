@@ -1,7 +1,18 @@
-import React, { createContext, useContext, useState, useCallback, useRef, useEffect } from 'react';
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useCallback,
+  useRef,
+  useEffect,
+} from 'react';
 import { Invitation } from 'sip.js';
 import * as sipService from '../helpers/sipService';
-import type { SipConfig, RegistrationState, CallState } from '../helpers/sipService';
+import type {
+  SipConfig,
+  RegistrationState,
+  CallState,
+} from '../helpers/sipService';
 import axiosInstance from '../helpers/axios';
 import { getToken } from '../helpers/token';
 
@@ -29,12 +40,16 @@ export const useCall = (): CallContextType => {
   return ctx;
 };
 
-export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [registrationState, setRegistrationState] = useState<RegistrationState>('unregistered');
+export const CallProvider: React.FC<{ children: React.ReactNode }> = ({
+  children,
+}) => {
+  const [registrationState, setRegistrationState] =
+    useState<RegistrationState>('unregistered');
   const [callState, setCallState] = useState<CallState>('idle');
   const [callerNumber, setCallerNumber] = useState('');
   const [callDuration, setCallDuration] = useState('00:00');
-  const [incomingInvitation, setIncomingInvitation] = useState<Invitation | null>(null);
+  const [incomingInvitation, setIncomingInvitation] =
+    useState<Invitation | null>(null);
 
   const sipConfigRef = useRef<SipConfig | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -67,7 +82,12 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     try {
       const token = getToken();
-      console.log('SIP init — token present:', !!token, 'length:', token.length);
+      console.log(
+        'SIP init — token present:',
+        !!token,
+        'length:',
+        token.length
+      );
       if (!token) {
         console.error('No auth token found — cannot initialize SIP');
         setRegistrationState('error');
