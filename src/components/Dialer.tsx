@@ -11,7 +11,7 @@ import {
 } from 'lucide-react';
 import { useCall } from '../context/CallContext';
 import { useSip } from '../helpers/jsSip';
-import { SessionState } from 'sip.js';
+// import { SessionState } from 'sip.js';
 import axiosInstance from '../helpers/axios';
 import socket from '../helpers/socket';
 
@@ -25,12 +25,13 @@ const Dialer: React.FC = () => {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const { sipStatus, callStatus, call, hangup } = useSip({
-    uri: `sip:1003@127.0.0.1`,
+    uri: `sip:09066269967@127.0.0.1`,
     wsServer: 'wss://127.0.0.1:8089/ws',
-    username: '1003',
+    username: '09066269967',
     password: 'testpass',
     domain: '127.0.0.1',
   });
+  console.log('sipStatus : >>> ', sipStatus);
 
   const {
     registrationState,
@@ -84,7 +85,7 @@ const Dialer: React.FC = () => {
   };
 
   useEffect(() => {
-    socket.emit('join_Room', '1003');
+    socket.emit('join_Room', '09066269967');
 
     socket.on('receiveCallStats', (data) => {
       console.log('CALL STATUS:', data);
@@ -124,7 +125,7 @@ const Dialer: React.FC = () => {
       try {
         call(phoneNumber);
         await axiosInstance().post('/api/calls/outbound', {
-          agent: 1003,
+          agent: '09066269967',
           target: phoneNumber,
         });
         makeCall(phoneNumber);
@@ -138,7 +139,7 @@ const Dialer: React.FC = () => {
   const handleEndCall = async () => {
     try {
       const res: any = await axiosInstance().post('/api/calls/agent_hangup', {
-        agent: 1003,
+        agent: '09066269967',
       });
       if (res.data.data.success) {
         resetCallState();
