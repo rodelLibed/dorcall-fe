@@ -7,64 +7,39 @@ import {
   MicOff,
   Pause,
   Play,
-  PhoneIncoming,
 } from 'lucide-react';
-import { useCall } from '../context/CallContext';
 import { useSip } from '../helpers/jsSip';
-// import { SessionState } from 'sip.js';
 import axiosInstance from '../helpers/axios';
 import socket from '../helpers/socket';
+
+// ── Change these per agent login ───────────────────────────────────────────
+const AGENT_EXT = '09066269967';
 
 const Dialer: React.FC = () => {
   const [phoneNumber, setPhoneNumber] = useState('');
   const [isCallActive, setIsCallActive] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
-  const [isOnHold, setIsOnHold] = useState(false);
   const [customerAnswered, setCustomerAnswered] = useState(false);
+  const [callStatus, setCallStatus] = useState<string>('');
   const [callSeconds, setCallSeconds] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const { sipStatus, callStatus, call, hangup } = useSip({
+  // ── JsSIP — registers browser as PJSIP endpoint to Linux Asterisk ────────
+  // When Asterisk originates a call to PJSIP/09066269967,
+  // JsSIP receives it and answers automatically so audio flows
+  const { sipStatus, toggleMute, toggleHold, callState, hangUp } = useSip({
     uri: `sip:09066269967@127.0.0.1`,
     wsServer: 'wss://127.0.0.1:8089/ws',
     username: '09066269967',
     password: 'testpass',
     domain: '127.0.0.1',
   });
-  console.log('sipStatus : >>> ', sipStatus);
 
-  const {
-    registrationState,
-    callState,
-    callerNumber,
-    callDuration,
-    incomingInvitation,
-    makeCall,
-    answerIncoming,
-    rejectIncoming,
-    hangUp,
-    toggleMute,
-    toggleHold,
-    sendDtmf,
-  } = useCall();
-
-  const isRinging = callState === 'ringing';
-
-  // Format seconds → "MM:SS"
-  const formatDuration = (secs: number) => {
-    const m = Math.floor(secs / 60)
-      .toString()
-      .padStart(2, '0');
-    const s = (secs % 60).toString().padStart(2, '0');
-    return `${m}:${s}`;
-  };
-
+  // ── Timer ─────────────────────────────────────────────────────────────────
   const startTimer = () => {
-    if (timerRef.current) return; // already running
+    if (timerRef.current) return;
     setCallSeconds(0);
-    timerRef.current = setInterval(() => {
-      setCallSeconds((prev) => prev + 1);
-    }, 1000);
+    timerRef.current = setInterval(() => setCallSeconds((s) => s + 1), 1000);
   };
 
   const stopTimer = () => {
@@ -75,30 +50,49 @@ const Dialer: React.FC = () => {
     setCallSeconds(0);
   };
 
+  const formatDuration = (secs: number) => {
+    const m = Math.floor(secs / 60)
+      .toString()
+      .padStart(2, '0');
+    const s = (secs % 60).toString().padStart(2, '0');
+    return `${m}:${s}`;
+  };
+
   const resetCallState = () => {
     setIsCallActive(false);
     setCustomerAnswered(false);
     setIsMuted(false);
-    setIsOnHold(false);
+    setCallStatus('');
     setPhoneNumber('');
     stopTimer();
   };
 
+  // ── Socket — receives AMI events from Node.js ─────────────────────────────
+  // Events: ringing → answered → ended
   useEffect(() => {
-    socket.emit('join_Room', '09066269967');
+    socket.emit('join_Room', AGENT_EXT);
 
-    socket.on('receiveCallStats', (data) => {
-      console.log('CALL STATUS:', data);
+    socket.on(
+      'receiveCallStats',
+      (data: { status: string; channel?: string }) => {
+        console.log('[Socket] Call status:', data);
+        setCallStatus(data.status);
 
-      if (data.status === 'answered') {
-        setCustomerAnswered(true);
-        startTimer(); // ← start counting when customer picks up
+        if (data.status === 'ringing') {
+          setIsCallActive(true);
+          setCustomerAnswered(false);
+        }
+
+        if (data.status === 'answered') {
+          setCustomerAnswered(true);
+          startTimer();
+        }
+
+        if (data.status === 'ended' || data.status === 'failed') {
+          resetCallState();
+        }
       }
-
-      if (data.status === 'ended') {
-        resetCallState();
-      }
-    });
+    );
 
     return () => {
       socket.off('receiveCallStats');
@@ -106,47 +100,50 @@ const Dialer: React.FC = () => {
     };
   }, []);
 
+  // ── Dialpad ───────────────────────────────────────────────────────────────
   const handleNumberClick = (num: string) => {
-    if (isCallActive) {
-      sendDtmf(num);
-    } else {
-      setPhoneNumber((prev) => prev + num);
-    }
+    if (!isCallActive) setPhoneNumber((prev) => prev + num);
   };
 
-  const handleBackspace = () => {
-    setPhoneNumber((prev) => prev.slice(0, -1));
-  };
-
+  // ── Initiate call via Node.js → AMI → Asterisk ───────────────────────────
   const handleCall = async () => {
-    if (phoneNumber) {
-      setIsCallActive(true);
-      setCustomerAnswered(false);
-      try {
-        call(phoneNumber);
-        await axiosInstance().post('/api/calls/outbound', {
-          agent: '09066269967',
-          target: phoneNumber,
-        });
-        makeCall(phoneNumber);
-      } catch (error) {
-        console.error('Call failed', error);
-        setIsCallActive(false);
-      }
+    if (!phoneNumber) return;
+    setIsCallActive(true);
+    setCustomerAnswered(false);
+    setCallStatus('ringing');
+
+    try {
+      await axiosInstance().post('/api/calls/outbound', {
+        agentExt: AGENT_EXT,
+        target: phoneNumber,
+      });
+      // Asterisk will now:
+      // 1. Ring this browser via JsSIP (PJSIP/09066269967)
+      // 2. Once browser answers, dial customer via WSL GSM
+      // 3. Socket events update the UI as call progresses
+    } catch (error) {
+      console.error('[Call] Failed to initiate:', error);
+      resetCallState();
     }
   };
 
+  // ── Hang up via Node.js → AMI → Asterisk ─────────────────────────────────
   const handleEndCall = async () => {
     try {
       const res: any = await axiosInstance().post('/api/calls/agent_hangup', {
-        agent: '09066269967',
+        agent: AGENT_EXT,
       });
-      if (res.data.data.success) {
+
+      // Also hang up the JsSIP session (agent browser audio leg)
+      hangUp();
+
+      if (res?.data?.data?.success) {
         resetCallState();
-        hangUp();
       }
     } catch (error) {
-      console.error('Call failed', error);
+      console.error('[Hangup] Failed:', error);
+      // Reset UI anyway so agent isn't stuck
+      hangUp();
       resetCallState();
     }
   };
@@ -156,15 +153,8 @@ const Dialer: React.FC = () => {
     setIsMuted(muted);
   };
 
-  const registrationColors: Record<string, string> = {
-    registered: 'bg-green-500',
-    registering: 'bg-yellow-500 animate-pulse',
-    unregistered: 'bg-gray-500',
-    error: 'bg-red-500',
-  };
-
-  // Determine status label
-  const callStatusLabel = () => {
+  // ── Status badge ──────────────────────────────────────────────────────────
+  const statusBadge = () => {
     if (!isCallActive) return null;
     if (callState === 'held')
       return { text: 'On Hold', color: 'bg-yellow-500/20 text-yellow-400' };
@@ -173,60 +163,35 @@ const Dialer: React.FC = () => {
     return { text: 'Ringing...', color: 'bg-blue-500/20 text-blue-400' };
   };
 
-  const statusInfo = callStatusLabel();
+  const sipColors: Record<string, string> = {
+    registered: 'bg-green-500',
+    registering: 'bg-yellow-500 animate-pulse',
+    unregistered: 'bg-gray-500',
+    error: 'bg-red-500',
+  };
+
+  const badge = statusBadge();
 
   return (
     <div className="max-w-2xl mx-auto">
+      {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-2xl font-bold text-gray-100">Phone Dialer</h2>
         <div className="flex items-center space-x-2 bg-dark-700 px-3 py-1.5 rounded-lg">
           <span
-            className={`w-2 h-2 rounded-full ${registrationColors[sipStatus]}`}
-          ></span>
+            className={`w-2 h-2 rounded-full ${sipColors[sipStatus] ?? 'bg-gray-500'}`}
+          />
           <span className="text-xs text-gray-300 capitalize">{sipStatus}</span>
         </div>
       </div>
 
-      {/* Incoming Call Banner */}
-      {isRinging && incomingInvitation && (
-        <div className="card p-4 mb-4 border border-green-500/50 bg-green-500/10">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-3">
-              <PhoneIncoming className="w-6 h-6 text-green-400 animate-pulse" />
-              <div>
-                <div className="text-sm text-gray-400">Incoming Call</div>
-                <div className="text-lg font-semibold text-gray-100">
-                  {callerNumber}
-                </div>
-              </div>
-            </div>
-            <div className="flex space-x-2">
-              <button
-                onClick={answerIncoming}
-                className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg flex items-center space-x-2 transition-colors"
-              >
-                <Phone className="w-4 h-4" />
-                <span>Answer</span>
-              </button>
-              <button
-                onClick={rejectIncoming}
-                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg flex items-center space-x-2 transition-colors"
-              >
-                <PhoneOff className="w-4 h-4" />
-                <span>Reject</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       <div className="card p-6">
-        {/* Display */}
+        {/* Number display */}
         <div className="mb-6">
           <div className="bg-dark-700 rounded-lg p-4 mb-4">
             <input
               type="text"
-              value={isCallActive ? callerNumber || phoneNumber : phoneNumber}
+              value={phoneNumber}
               onChange={(e) => !isCallActive && setPhoneNumber(e.target.value)}
               placeholder="Enter phone number"
               className="w-full bg-transparent text-3xl text-center text-gray-100 focus:outline-none"
@@ -234,15 +199,14 @@ const Dialer: React.FC = () => {
             />
           </div>
 
-          {/* Call Status Badge */}
-          {isCallActive && statusInfo && (
+          {/* Status badge */}
+          {isCallActive && badge && (
             <div className="text-center">
               <div
-                className={`inline-flex items-center space-x-2 px-4 py-2 rounded-lg ${statusInfo.color}`}
+                className={`inline-flex items-center space-x-2 px-4 py-2 rounded-lg ${badge.color}`}
               >
-                <div className="w-2 h-2 rounded-full bg-current animate-pulse"></div>
-                <span className="font-medium">{statusInfo.text}</span>
-                {/* Only show timer when customer answered */}
+                <div className="w-2 h-2 rounded-full bg-current animate-pulse" />
+                <span className="font-medium">{badge.text}</span>
                 {customerAnswered && (
                   <span className="font-mono">
                     {formatDuration(callSeconds)}
@@ -268,14 +232,18 @@ const Dialer: React.FC = () => {
           )}
         </div>
 
-        {/* Call Controls */}
+        {/* Controls */}
         {!isCallActive ? (
           <div className="flex gap-3">
-            <button onClick={handleBackspace} className="btn-secondary flex-1">
+            <button
+              onClick={() => setPhoneNumber((prev) => prev.slice(0, -1))}
+              className="btn-secondary flex-1"
+            >
               Backspace
             </button>
             <button
               onClick={handleCall}
+              disabled={!phoneNumber || sipStatus !== 'registered'}
               className="btn-primary flex-1 flex items-center justify-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <Phone className="w-5 h-5" />
@@ -284,6 +252,7 @@ const Dialer: React.FC = () => {
           </div>
         ) : (
           <div className="grid grid-cols-4 gap-3">
+            {/* Mute */}
             <button
               onClick={handleMuteToggle}
               className={`p-4 rounded-lg transition-colors ${isMuted ? 'bg-red-600 text-white' : 'bg-dark-700 text-gray-300 hover:bg-dark-600'}`}
@@ -295,6 +264,7 @@ const Dialer: React.FC = () => {
               )}
             </button>
 
+            {/* Hold */}
             <button
               onClick={toggleHold}
               className={`p-4 rounded-lg transition-colors ${callState === 'held' ? 'bg-yellow-600 text-white' : 'bg-dark-700 text-gray-300 hover:bg-dark-600'}`}
@@ -306,10 +276,12 @@ const Dialer: React.FC = () => {
               )}
             </button>
 
+            {/* Volume (placeholder) */}
             <button className="p-4 bg-dark-700 hover:bg-dark-600 rounded-lg transition-colors text-gray-300">
               <Volume2 className="w-5 h-5 mx-auto" />
             </button>
 
+            {/* End call */}
             <button
               onClick={handleEndCall}
               className="p-4 bg-red-600 hover:bg-red-700 rounded-lg transition-colors text-white"
@@ -320,30 +292,7 @@ const Dialer: React.FC = () => {
         )}
       </div>
 
-      {/* Quick Dial */}
-      <div className="card p-6 mt-6">
-        <h3 className="text-lg font-semibold text-gray-100 mb-4">Quick Dial</h3>
-        <div className="grid grid-cols-2 gap-3">
-          {[
-            { name: 'Support Line', number: '+1234567890' },
-            { name: 'Manager', number: '+0987654321' },
-            { name: 'IT Help', number: '+1122334455' },
-            { name: 'HR Department', number: '+5544332211' },
-          ].map((contact, index) => (
-            <button
-              key={index}
-              onClick={() => setPhoneNumber(contact.number)}
-              className="bg-dark-700 hover:bg-dark-600 p-3 rounded-lg text-left transition-colors"
-              disabled={isCallActive}
-            >
-              <div className="text-sm font-medium text-gray-100">
-                {contact.name}
-              </div>
-              <div className="text-xs text-gray-400 mt-1">{contact.number}</div>
-            </button>
-          ))}
-        </div>
-      </div>
+      {/* Remote audio — JsSIP pipes audio here */}
       <audio id="remoteAudio" autoPlay hidden />
     </div>
   );

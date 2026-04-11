@@ -1,205 +1,230 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
-import {
-  UserAgent,
-  Registerer,
-  Inviter,
-  Session,
-  SessionState,
-  UserAgentOptions,
-  RegistererState,
-} from 'sip.js';
+import { useEffect, useRef, useState } from 'react';
+import JsSIP from 'jssip';
 
-export type SipStatus = 'idle' | 'registering' | 'registered' | 'error';
-export type CallStatus = SessionState | 'idle';
+// ── Types ──────────────────────────────────────────────────────────────────
+export type SipStatus = 'unregistered' | 'registering' | 'registered' | 'error';
+export type CallState = 'idle' | 'ringing' | 'active' | 'held';
+
+// JsSIP does not export RTCSession as a standalone type — use any
+type JsSIPSession = any;
 
 interface UseSipOptions {
-  uri: string;
-  wsServer: string;
-  username: string;
-  password: string;
-  domain?: string; // ← optional, defaults to 127.0.0.1
+  uri: string; // sip:09066269967@192.168.1.15
+  wsServer: string; // wss://192.168.1.15:8089/ws
+  username: string; // 09066269967
+  password: string; // testpass
+  domain: string; // 192.168.1.15
 }
 
-export function useSip({
+interface UseSipReturn {
+  sipStatus: SipStatus;
+  callStatus: string;
+  callState: CallState;
+  call: (number: string) => void;
+  hangUp: () => void;
+  toggleMute: () => boolean;
+  toggleHold: () => boolean;
+}
+
+// ── Hook ───────────────────────────────────────────────────────────────────
+export const useSip = ({
   uri,
   wsServer,
   username,
   password,
-  domain = '127.0.0.1',
-}: UseSipOptions) {
-  const uaRef = useRef<UserAgent | null>(null);
-  const registererRef = useRef<Registerer | null>(null);
-  const sessionRef = useRef<Session | null>(null);
+  domain,
+}: UseSipOptions): UseSipReturn => {
+  const [sipStatus, setSipStatus] = useState<SipStatus>('unregistered');
+  const [callStatus, setCallStatus] = useState<string>('');
+  const [callState, setCallState] = useState<CallState>('idle');
 
-  const [sipStatus, setSipStatus] = useState<SipStatus>('idle');
-  const [callStatus, setCallStatus] = useState<CallStatus>('idle');
+  const uaRef = useRef<JsSIP.UA | null>(null);
+  const sessionRef = useRef<JsSIPSession | null>(null);
+  const isMutedRef = useRef(false);
+  const isHeldRef = useRef(false);
 
   useEffect(() => {
-    const parsedUri = UserAgent.makeURI(uri);
-    if (!parsedUri) {
-      console.error('❌ Invalid SIP URI:', uri);
-      setSipStatus('error');
-      return;
-    }
+    // ── Silence JsSIP debug logs in production ───────────────────────────
+    JsSIP.debug.disable('JsSIP:*');
 
-    const options: UserAgentOptions = {
-      uri: parsedUri,
-      transportOptions: {
-        server: wsServer,
-        traceSip: true,
-      },
-      authorizationUsername: username,
-      authorizationPassword: password,
-      logLevel: 'debug',
-      sessionDescriptionHandlerFactoryOptions: {
-        peerConnectionConfiguration: {
-          iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
-        },
-      },
-    };
+    const socket = new JsSIP.WebSocketInterface(wsServer);
 
-    const ua = new UserAgent(options);
+    const ua = new JsSIP.UA({
+      sockets: [socket],
+      uri,
+      authorization_user: username,
+      password,
+      realm: domain,
+      register: true,
+      session_timers: false,
+    });
+
     uaRef.current = ua;
 
-    ua.start()
-      .then(() => {
-        console.log('✅ UA started');
-        setSipStatus('registering');
+    // ── Registration events ──────────────────────────────────────────────
+    ua.on('connecting', () => setSipStatus('registering'));
+    ua.on('connected', () => setSipStatus('registering'));
 
-        const registerer = new Registerer(ua, {
-          expires: 300,
-        });
-        registererRef.current = registerer;
+    ua.on('registered', () => {
+      setSipStatus('registered');
+      console.log('[JsSIP] Registered as', username);
+    });
 
-        registerer.stateChange.addListener((state: RegistererState) => {
-          console.log('📋 Registerer state:', state);
-          if (state === RegistererState.Registered) {
-            setSipStatus('registered');
-          } else if (state === RegistererState.Unregistered) {
-            setSipStatus('idle');
-          } else if (state === RegistererState.Terminated) {
-            setSipStatus('error');
-          }
-        });
+    ua.on('unregistered', () => {
+      setSipStatus('unregistered');
+      console.log('[JsSIP] Unregistered');
+    });
 
-        registerer.register().catch((err) => {
-          console.error('❌ Register failed:', err);
-          setSipStatus('error');
-        });
-      })
-      .catch((err) => {
-        console.error('❌ UA start failed:', err);
-        setSipStatus('error');
-      });
+    ua.on('registrationFailed', (e: any) => {
+      setSipStatus('error');
+      console.error('[JsSIP] Registration failed:', e.cause);
+    });
 
-    return () => {
-      registererRef.current?.unregister().catch(() => {});
-      ua.stop().catch(() => {});
-    };
-  }, [uri, wsServer, username, password]);
-
-  const call = useCallback(
-    (targetUri: string) => {
-      if (!uaRef.current) {
-        console.error('❌ UA not initialized');
-        return;
-      }
-
-      // ← Auto-build full SIP URI if only extension number passed
-      const fullUri = targetUri.includes('@')
-        ? targetUri
-        : `sip:${targetUri}@${domain}`;
-
-      console.log('📞 Calling:', fullUri);
-
-      const target = UserAgent.makeURI(fullUri);
-      if (!target) {
-        console.error('❌ Invalid target URI:', fullUri);
-        return;
-      }
-
-      const session = new Inviter(uaRef.current, target);
+    // ── Incoming call — from Asterisk AMI Originate ──────────────────────
+    // When Node.js triggers a call, Asterisk rings this browser first.
+    // We auto-answer so the agent's audio leg is established, then
+    // Asterisk bridges the customer GSM call to it.
+    ua.on('newRTCSession', ({ session }: { session: JsSIPSession }) => {
       sessionRef.current = session;
 
-      session.stateChange.addListener((state: SessionState) => {
-        console.log('📞 Call state:', state);
-        setCallStatus(state);
+      if (session.direction === 'incoming') {
+        console.log('[JsSIP] Incoming call from Asterisk — auto-answering');
+        setCallState('ringing');
+        setCallStatus('ringing');
 
-        if (state === SessionState.Terminated) {
-          sessionRef.current = null;
-          setCallStatus('idle');
-        }
+        session.answer({
+          mediaConstraints: { audio: true, video: false },
+          pcConfig: {
+            iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+          },
+        });
+      }
 
-        // ← ADD THIS BLOCK
-        if (state === SessionState.Established) {
-          const pc = (session.sessionDescriptionHandler as any)?.peerConnection;
-          if (pc) {
-            const remoteStream = new MediaStream();
-            pc.getReceivers().forEach((receiver: RTCRtpReceiver) => {
-              if (receiver.track) {
-                remoteStream.addTrack(receiver.track);
-              }
-            });
+      // ── Session events ─────────────────────────────────────────────────
+      session.on('confirmed', () => {
+        setCallState('active');
+        setCallStatus('active');
+        console.log('[JsSIP] Call confirmed — audio active');
 
-            // Attach to audio element
-            let audio = document.getElementById(
-              'remoteAudio'
-            ) as HTMLAudioElement;
-            if (!audio) {
-              audio = document.createElement('audio');
-              audio.id = 'remoteAudio';
-              audio.autoplay = true;
-              document.body.appendChild(audio);
-            }
-            audio.srcObject = remoteStream;
-            audio
-              .play()
-              .catch((err) => console.error('❌ Audio play failed:', err));
-            console.log('🔊 Remote audio attached');
-          }
-        }
-        // ← END OF ADDED BLOCK
-
-        if (state === SessionState.Terminated) {
-          sessionRef.current = null;
-          setCallStatus('idle');
-
-          // Clean up audio
-          const audio = document.getElementById(
-            'remoteAudio'
-          ) as HTMLAudioElement;
-          if (audio) {
-            audio.srcObject = null;
-          }
+        // Pipe remote audio to the <audio> element in the DOM
+        const remoteAudio = document.getElementById(
+          'remoteAudio'
+        ) as HTMLAudioElement;
+        if (remoteAudio) {
+          const remoteStream = new MediaStream();
+          session.connection.getReceivers().forEach((receiver: any) => {
+            if (receiver.track) remoteStream.addTrack(receiver.track);
+          });
+          remoteAudio.srcObject = remoteStream;
+          remoteAudio
+            .play()
+            .catch((err) => console.warn('[Audio] Play failed:', err));
         }
       });
 
-      session.invite().catch((err) => {
-        console.error('❌ Invite failed:', err);
-        setCallStatus('idle');
+      session.on('ended', () => {
+        sessionRef.current = null;
+        isMutedRef.current = false;
+        isHeldRef.current = false;
+        setCallState('idle');
+        setCallStatus('ended');
+        console.log('[JsSIP] Call ended');
       });
-    },
-    [domain]
-  );
 
-  const hangup = useCallback(() => {
+      session.on('failed', (e: any) => {
+        sessionRef.current = null;
+        setCallState('idle');
+        setCallStatus('failed');
+        console.warn('[JsSIP] Call failed:', e.cause);
+      });
+
+      session.on('hold', () => {
+        setCallState('held');
+        console.log('[JsSIP] Call on hold');
+      });
+
+      session.on('unhold', () => {
+        setCallState('active');
+        console.log('[JsSIP] Call resumed');
+      });
+    });
+
+    ua.start();
+
+    return () => {
+      ua.stop();
+      uaRef.current = null;
+    };
+  }, [uri, wsServer, username, password, domain]);
+
+  // ── Manually place an outbound SIP call (not used in AMI flow) ───────────
+  // In the AMI flow, Node.js triggers the call — the browser just auto-answers.
+  // This is here in case you need direct SIP dialing in the future.
+  const call = (number: string) => {
+    if (!uaRef.current || sipStatus !== 'registered') return;
+
+    const session = uaRef.current.call(`sip:${number}@${domain}`, {
+      mediaConstraints: { audio: true, video: false },
+      pcConfig: {
+        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+      },
+    });
+
+    sessionRef.current = session;
+    setCallState('ringing');
+  };
+
+  // ── Hang up current session ──────────────────────────────────────────────
+  const hangUp = () => {
     if (!sessionRef.current) return;
-
-    const session = sessionRef.current;
-    const state = session.state;
-
-    if (state === SessionState.Established) {
-      session.bye().catch(console.error);
-    } else if (
-      state === SessionState.Establishing ||
-      state === SessionState.Initial
-    ) {
-      (session as Inviter).cancel().catch(console.error);
+    try {
+      sessionRef.current.terminate();
+    } catch (e) {
+      console.warn('[JsSIP] Hangup error:', e);
     }
-
     sessionRef.current = null;
-    setCallStatus('idle');
-  }, []);
+    isMutedRef.current = false;
+    isHeldRef.current = false;
+    setCallState('idle');
+  };
 
-  return { sipStatus, callStatus, call, hangup };
-}
+  // ── Toggle mute — returns new mute state ────────────────────────────────
+  const toggleMute = (): boolean => {
+    const session = sessionRef.current;
+    if (!session) return false;
+
+    if (isMutedRef.current) {
+      session.unmute({ audio: true });
+      isMutedRef.current = false;
+    } else {
+      session.mute({ audio: true });
+      isMutedRef.current = true;
+    }
+    return isMutedRef.current;
+  };
+
+  // ── Toggle hold — returns new hold state ────────────────────────────────
+  const toggleHold = (): boolean => {
+    const session = sessionRef.current;
+    if (!session) return false;
+
+    if (isHeldRef.current) {
+      session.unhold();
+      isHeldRef.current = false;
+    } else {
+      session.hold();
+      isHeldRef.current = true;
+    }
+    return isHeldRef.current;
+  };
+
+  return {
+    sipStatus,
+    callStatus,
+    callState,
+    call,
+    hangUp,
+    toggleMute,
+    toggleHold,
+  };
+};

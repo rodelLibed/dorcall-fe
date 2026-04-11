@@ -14,6 +14,7 @@
     "axios": "^1.6.7",
     "clsx": "^2.1.0",
     "crypto-js": "^4.2.0",
+    "jssip": "^3.13.6",
     "lucide-react": "^0.344.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
@@ -22,6 +23,7 @@
     "socket.io-client": "^4.6.1"
   },
   "devDependencies": {
+    "@types/jssip": "^3.5.3",
     "@types/react": "^18.2.56",
     "@types/react-dom": "^18.2.19",
     "@typescript-eslint/eslint-plugin": "^7.0.2",
