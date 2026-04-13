@@ -10,8 +10,9 @@ import {
   PhoneIncoming,
 } from 'lucide-react';
 import { useCall } from '../context/CallContext';
+import { useAuth } from '../context/AuthContext';
 import { useSip } from '../helpers/jsSip';
-// import { SessionState } from 'sip.js';
+import { SessionState } from 'sip.js';
 import axiosInstance from '../helpers/axios';
 import socket from '../helpers/socket';
 
@@ -19,27 +20,27 @@ const Dialer: React.FC = () => {
   const [phoneNumber, setPhoneNumber] = useState('');
   const [isCallActive, setIsCallActive] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
-  const [isOnHold, setIsOnHold] = useState(false);
+  const [_isOnHold, setIsOnHold] = useState(false);
   const [customerAnswered, setCustomerAnswered] = useState(false);
   const [callSeconds, setCallSeconds] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  const { user } = useAuth();
+  const sipExtension = user?.username ?? '';
+
   const { sipStatus, callStatus, call, hangup } = useSip({
-    uri: `sip:09066269967@127.0.0.1`,
+    uri: `sip:${sipExtension}@127.0.0.1`,
     wsServer: 'wss://127.0.0.1:8089/ws',
-    username: '09066269967',
+    username: sipExtension,
     password: 'testpass',
     domain: '127.0.0.1',
   });
   console.log('sipStatus : >>> ', sipStatus);
 
   const {
-    registrationState,
     callState,
     callerNumber,
-    callDuration,
     incomingInvitation,
-    makeCall,
     answerIncoming,
     rejectIncoming,
     hangUp,
@@ -85,7 +86,7 @@ const Dialer: React.FC = () => {
   };
 
   useEffect(() => {
-    socket.emit('join_Room', '09066269967');
+    socket.emit('join_Room', sipExtension);
 
     socket.on('receiveCallStats', (data) => {
       console.log('CALL STATUS:', data);
@@ -123,12 +124,12 @@ const Dialer: React.FC = () => {
       setIsCallActive(true);
       setCustomerAnswered(false);
       try {
+        // Keep SIP leg with Asterisk, and trigger SIM800C via backend AT command.
         call(phoneNumber);
         await axiosInstance().post('/api/calls/outbound', {
-          agent: '09066269967',
           target: phoneNumber,
+          agent: sipExtension,
         });
-        makeCall(phoneNumber);
       } catch (error) {
         console.error('Call failed', error);
         setIsCallActive(false);
@@ -138,15 +139,14 @@ const Dialer: React.FC = () => {
 
   const handleEndCall = async () => {
     try {
-      const res: any = await axiosInstance().post('/api/calls/agent_hangup', {
-        agent: '09066269967',
+      await axiosInstance().post('/api/calls/agent_hangup', {
+        agent: sipExtension,
       });
-      if (res.data.data.success) {
-        resetCallState();
-        hangUp();
-      }
     } catch (error) {
-      console.error('Call failed', error);
+      console.error('Hangup failed', error);
+    } finally {
+      hangup();
+      hangUp();
       resetCallState();
     }
   };
@@ -168,7 +168,7 @@ const Dialer: React.FC = () => {
     if (!isCallActive) return null;
     if (callState === 'held')
       return { text: 'On Hold', color: 'bg-yellow-500/20 text-yellow-400' };
-    if (customerAnswered)
+    if (customerAnswered || callStatus === SessionState.Established)
       return { text: 'Connected', color: 'bg-green-500/20 text-green-400' };
     return { text: 'Ringing...', color: 'bg-blue-500/20 text-blue-400' };
   };

@@ -1,11 +1,10 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Phone, MessageSquare, Users, Clock, LogOut, User, Activity } from 'lucide-react'
 import Dialer from '../components/Dialer'
 import CallHistory from '../components/CallHistory'
 import SmsChat from '../components/SmsChat'
 import ContactList from '../components/ContactList'
-import { useCall } from '../context/CallContext'
 import { useAuth } from '../context/AuthContext'
 
 type TabType = 'dialer' | 'calls' | 'sms' | 'contacts'
@@ -14,12 +13,7 @@ const AgentDashboard: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabType>('dialer')
   const [agentStatus, setAgentStatus] = useState<'available' | 'busy' | 'offline'>('available')
   const navigate = useNavigate()
-  const { initializeSip, registrationState } = useCall()
   const { user, logout } = useAuth()
-
-  useEffect(() => {
-    initializeSip()
-  }, [initializeSip])
 
   const handleLogout = () => {
     logout()

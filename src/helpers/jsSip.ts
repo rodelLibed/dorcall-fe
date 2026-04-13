@@ -118,59 +118,90 @@ export function useSip({
         return;
       }
 
-      const session = new Inviter(uaRef.current, target);
+      const session = new Inviter(uaRef.current, target, {
+        sessionDescriptionHandlerOptions: {
+          constraints: { audio: true, video: false },
+        },
+      });
       sessionRef.current = session;
+
+      const attachRemoteAudio = (stream: MediaStream) => {
+        console.log('🔊 Attaching remote audio, tracks:', stream.getTracks().length);
+        let audio = document.getElementById('remoteAudio') as HTMLAudioElement | null;
+        if (!audio) {
+          audio = document.createElement('audio');
+          audio.id = 'remoteAudio';
+          audio.autoplay = true;
+          document.body.appendChild(audio);
+        }
+        audio.srcObject = stream;
+        audio.play()
+          .then(() => console.log('🔊 Audio playing ✅'))
+          .catch((err) => console.error('❌ Audio play() blocked:', err));
+      };
+
+      // Wire up ICE listener as soon as the session starts establishing
+      // so we don't miss transitions that happen before Established fires
+      const wireIceListener = () => {
+        const pc = (session.sessionDescriptionHandler as any)
+          ?.peerConnection as RTCPeerConnection | undefined;
+        if (!pc) return false;
+        pc.addEventListener('iceconnectionstatechange', () => {
+          console.log('🧊 ICE state:', pc.iceConnectionState, '| Gathering:', pc.iceGatheringState);
+          if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+            console.log('✅ ICE connected — RTP should flow now');
+          }
+          if (pc.iceConnectionState === 'failed') {
+            console.error('❌ ICE FAILED — Windows Firewall is likely blocking UDP 10000-20000 to WSL2. Run: New-NetFirewallRule -DisplayName "Asterisk RTP" -Direction Inbound -Protocol UDP -LocalPort 10000-20000 -Action Allow');
+          }
+        });
+        console.log('🧊 ICE listener wired | current state:', pc.iceConnectionState);
+        return true;
+      };
 
       session.stateChange.addListener((state: SessionState) => {
         console.log('📞 Call state:', state);
         setCallStatus(state);
 
-        if (state === SessionState.Terminated) {
-          sessionRef.current = null;
-          setCallStatus('idle');
+        if (state === SessionState.Establishing) {
+          // SDH is created during invite() — try to wire ICE listener early
+          setTimeout(() => wireIceListener(), 100);
         }
 
-        // ← ADD THIS BLOCK
         if (state === SessionState.Established) {
-          const pc = (session.sessionDescriptionHandler as any)?.peerConnection;
+          const pc = (session.sessionDescriptionHandler as any)
+            ?.peerConnection as RTCPeerConnection | undefined;
+
+          console.log('🔗 PC exists:', !!pc, '| ICE:', pc?.iceConnectionState);
+
           if (pc) {
-            const remoteStream = new MediaStream();
-            pc.getReceivers().forEach((receiver: RTCRtpReceiver) => {
-              if (receiver.track) {
-                remoteStream.addTrack(receiver.track);
+            // Wire ICE listener if not already wired in Establishing
+            wireIceListener();
+
+            // ontrack fires after ICE + DTLS complete
+            pc.addEventListener('track', (event: RTCTrackEvent) => {
+              console.log('🎵 Track received:', event.track.kind, '| streams:', event.streams.length);
+              if (event.track.kind === 'audio') {
+                attachRemoteAudio(event.streams[0] ?? new MediaStream([event.track]));
               }
             });
 
-            // Attach to audio element
-            let audio = document.getElementById(
-              'remoteAudio'
-            ) as HTMLAudioElement;
-            if (!audio) {
-              audio = document.createElement('audio');
-              audio.id = 'remoteAudio';
-              audio.autoplay = true;
-              document.body.appendChild(audio);
+            // Fallback: tracks may already be available
+            const audioTracks = pc.getReceivers()
+              .filter((r) => r.track?.kind === 'audio')
+              .map((r) => r.track);
+            console.log('🔊 Existing audio receivers at Established:', audioTracks.length);
+            if (audioTracks.length > 0) {
+              attachRemoteAudio(new MediaStream(audioTracks));
             }
-            audio.srcObject = remoteStream;
-            audio
-              .play()
-              .catch((err) => console.error('❌ Audio play failed:', err));
-            console.log('🔊 Remote audio attached');
           }
         }
-        // ← END OF ADDED BLOCK
 
         if (state === SessionState.Terminated) {
           sessionRef.current = null;
           setCallStatus('idle');
-
-          // Clean up audio
-          const audio = document.getElementById(
-            'remoteAudio'
-          ) as HTMLAudioElement;
-          if (audio) {
-            audio.srcObject = null;
-          }
+          const audio = document.getElementById('remoteAudio') as HTMLAudioElement | null;
+          if (audio) audio.srcObject = null;
         }
       });
 
